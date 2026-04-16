@@ -7,19 +7,29 @@ __pycache__/
 # Virtual env
 venv/
 env/
-
-# Model files
-*.joblib
+.venv/
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Kronos local clone
+# Kronos local clone — cloned at runtime on cloud
 src/kronos/
 
-# Local config
+# Local config — regenerated at runtime on cloud
 src/kronos_path.json
 
 # Logs
 *.log
+
+# Evaluation outputs
+eval_out/
+
+# IDE
+.vscode/
+.idea/
+
+# NOTE: model.joblib and features.joblib ARE committed to git
+# so Streamlit Cloud can use them without retraining.
+# They are excluded only if larger than GitHub's 100MB limit.
+# Current size: ~5-15MB — safe to commit.

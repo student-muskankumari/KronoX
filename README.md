@@ -24,7 +24,11 @@
 
 </div>
 
+<div align="center">
 
+![Kronos Dashboard](assets/dashboard1.png)
+
+</div>
 ---
 
 ## ✨ Features

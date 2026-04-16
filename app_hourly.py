@@ -15,6 +15,12 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 
+# ── Cloud startup: auto-setup Kronos + train model if missing ─
+try:
+    import cloud_startup  # noqa: F401
+except Exception:
+    pass
+
 from src.data_loader import fetch_yfinance, fetch_live_price
 from src.forecast_utils import build_future_dates
 
@@ -118,9 +124,9 @@ with st.sidebar:
     st.markdown("<br/>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     with c1:
-        run_btn  = st.button("Start", width='stretch')
+        run_btn  = st.button("Start", width="stretch")
     with c2:
-        stop_btn = st.button("Stop",  width='stretch')
+        stop_btn = st.button("Stop",  width="stretch")
 
     st.markdown("<hr style='border-color:#2a2a3d;margin:12px 0 6px;'/>",
                 unsafe_allow_html=True)
@@ -355,26 +361,94 @@ def _lay(title,h=390,xl="",yl="Price"):
                             bgcolor="rgba(0,0,0,0)",font=dict(size=11,color="#999")),
                 margin=dict(l=50,r=20,t=50,b=70),hovermode="x unified")
 
-def fchart(df,fdts,preds,rmse_v,mg,ticker):
-    h=df.tail(300); hd=h["Date"].tolist(); hc=h["Close"].tolist()
-    up=[p+rmse_v*mg for p in preds]; lo=[p-rmse_v*mg for p in preds]
-    fig=go.Figure()
-    fig.add_trace(go.Scatter(x=hd,y=hc,mode="lines",name="Historical",
-                             line=dict(color="#4db8ff",width=1.8)))
+def _smooth(values, window=3):
+    """Lightly smooth prediction values to remove Kronos oscillation noise."""
+    if len(values) <= window:
+        return values
+    s = pd.Series(values).rolling(window, min_periods=1, center=True).mean()
+    return s.tolist()
+
+def fchart(df, fdts, preds, rmse_v, mg, ticker):
+    """
+    Fixed chart:
+    - Shows last 5× the prediction horizon in history (balanced view)
+    - Smooths noisy Kronos predictions
+    - Adds vertical divider line at forecast start
+    - Sets explicit x-axis range so predictions are clearly visible
+    """
+    n_pred = len(preds)
+
+    # Show 5× prediction steps of history — prediction window ~17% of chart
+    hist_bars = max(n_pred * 5, 30)
+    h  = df.tail(hist_bars)
+    hd = h["Date"].tolist()
+    hc = h["Close"].tolist()
+
+    # Smooth predictions (reduces Kronos oscillation noise)
+    smooth_preds = _smooth(preds, window=3)
+    up = [p + rmse_v * mg for p in smooth_preds]
+    lo = [p - rmse_v * mg for p in smooth_preds]
+
+    fig = go.Figure()
+
+    # Historical line
+    fig.add_trace(go.Scatter(
+        x=hd, y=hc, mode="lines", name="Historical",
+        line=dict(color="#4db8ff", width=2)))
+
+    # Bridge connector (last historical → first predicted)
     if fdts:
-        fig.add_trace(go.Scatter(x=[hd[-1],fdts[0]],y=[hc[-1],preds[0]],
-                                 mode="lines",showlegend=False,
-                                 line=dict(color="#ff9933",width=1.5,dash="dot")))
-    fig.add_trace(go.Scatter(x=fdts+fdts[::-1],y=up+lo[::-1],
-                             fill="toself",fillcolor="rgba(130,90,200,0.2)",
-                             line=dict(color="rgba(0,0,0,0)"),
-                             name="RMSE band",hoverinfo="skip"))
-    fig.add_trace(go.Scatter(x=fdts,y=preds,mode="lines",name="Predicted",
-                             line=dict(color="#ff9933",width=2.2,dash="dash")))
-    try: ds=pd.Timestamp(df["Date"].iloc[-1]).strftime("%b %d, %Y")
-    except: ds=""
-    fig.update_layout(**_lay(f"Live {ticker} Forecast",
-                             xl=f"Date  (data as of {ds})"))
+        fig.add_trace(go.Scatter(
+            x=[hd[-1], fdts[0]], y=[hc[-1], smooth_preds[0]],
+            mode="lines", showlegend=False,
+            line=dict(color="#ff9933", width=1.5, dash="dot")))
+
+    # RMSE confidence band
+    fig.add_trace(go.Scatter(
+        x=fdts + fdts[::-1], y=up + lo[::-1],
+        fill="toself", fillcolor="rgba(130,90,200,0.18)",
+        line=dict(color="rgba(0,0,0,0)"),
+        name="Confidence Band", hoverinfo="skip"))
+
+    # Predicted line
+    fig.add_trace(go.Scatter(
+        x=fdts, y=smooth_preds, mode="lines+markers", name="Predicted",
+        line=dict(color="#ff9933", width=2.5, dash="dash"),
+        marker=dict(size=5, color="#ff9933")))
+
+    # Vertical line at forecast start
+    if fdts:
+        fig.add_shape(type="line",x0=hd[-1], x1=hd[-1], y0=0, y1=1, xref="x", yref="paper",line=dict(color="#555", width=1, dash="dot"),)
+        fig.add_annotation(x=hd[-1], y=1,xref="x", yref="paper",text="Forecast →",showarrow=False,font=dict(color="#888", size=10),xanchor="left", yanchor="bottom",bgcolor="rgba(0,0,0,0)",)
+        
+
+    try:
+        ds = pd.Timestamp(df["Date"].iloc[-1]).strftime("%b %d, %Y")
+    except Exception:
+        ds = ""
+
+    # Build explicit x-axis range: from first historical bar to last predicted date
+    try:
+        x_start = pd.Timestamp(hd[0])
+        x_end   = pd.Timestamp(fdts[-1]) + pd.Timedelta(days=2)
+    except Exception:
+        x_start = None; x_end = None
+
+    layout = _lay(f"Live {ticker} Forecast",
+                  xl=f"Date  (data as of {ds})", h=420)
+
+    if x_start and x_end:
+        layout["xaxis"]["range"] = [str(x_start), str(x_end)]
+
+    # Y-axis range: cover both history and prediction with padding
+    all_prices = hc + smooth_preds + up + lo
+    all_prices = [p for p in all_prices if p and not np.isnan(p)]
+    if all_prices:
+        ymin = min(all_prices) * 0.995
+        ymax = max(all_prices) * 1.005
+        layout["yaxis"]["range"] = [ymin, ymax]
+
+    fig.update_layout(**layout)
     return fig
 
 def echart(portfolio,actual_closes,cap0):
@@ -549,7 +623,7 @@ def render(res,lpx,is_live=False,cd=None):
         unsafe_allow_html=True)
 
     s_chart.plotly_chart(fchart(res["df"],res["fdts"],res["preds"],rv,margin,ticker),
-                         width='stretch')
+                         width="stretch")
 
     with s_bt.container():
         st.markdown("<div class='sec-hdr'>💰 Backtesting Results</div>",
@@ -569,7 +643,7 @@ def render(res,lpx,is_live=False,cd=None):
 
         if bt["portfolio"] and bt["actual_closes"]:
             st.plotly_chart(echart(bt["portfolio"],bt["actual_closes"],float(icap)),
-                            width='stretch')
+                            width="stretch")
 
         cL,cR=st.columns([3,2])
         with cL:
@@ -581,7 +655,7 @@ def render(res,lpx,is_live=False,cd=None):
         with cR:
             if bt["ps"]+bt["ns"]+bt["hs"]>0:
                 st.plotly_chart(sdchart(bt["ps"],bt["ns"],bt["hs"]),
-                                width='stretch')
+                                width="stretch")
 
         actual_t=[t for t in bt["tlog"] if t["Action"] in ("BUY","SELL","STOP")]
         if actual_t:

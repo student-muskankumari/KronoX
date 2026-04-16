@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual env
+venv/
+env/
+
+# Model files
+*.joblib
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Kronos local clone
+src/kronos/
+
+# Local config
+src/kronos_path.json
+
+# Logs
+*.log

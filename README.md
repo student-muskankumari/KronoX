@@ -18,6 +18,11 @@
 
 ## 📸 Screenshots
 
+<div align="center">
+
+![Kronos Dashboard](assets/dashboard.png)
+
+</div>
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  Kronos – Live Stock Forecasting App                        │
